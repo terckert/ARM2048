@@ -1,0 +1,17 @@
+;***************************************************************************************************
+; Function name: 
+; Function behavior: 
+; 
+; Function inputs: 
+; 
+; Function returns: 
+; 
+; Registers used: 
+; 
+; 
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
