@@ -1,7 +1,9 @@
     .data
 
-    .global mydata
-    
+    .global user_entry
+user_entry:         .byte   0               ; Holds keypad interrupt value
+
+
     .text
 
     .global uart_init
@@ -14,9 +16,11 @@
     .global int2string
     .global string2int
 
-    .global mydata 
+    .global user_entry
     
-mydata:         .byte   0               ; Holds keypad interrupt value
+
+
+ptr_to_user_entry: .word user_entry
 
 ;***************************************************************************************************
 ; Function name: uart_init
@@ -189,9 +193,8 @@ uart_interrupt_init:
 ; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
 ;*************************************************************************************************** 
 UART0_Handler: 
-	push 	{lr}
 	; Push registers 4 - 11 to preserve values
-	push 	{r4-r11}
+	push 	{r4-r11, lr}
 	
 	; Load address of UART interrupt clear register (UARTICR): #0x4000.C044
 	; Load value from register and clear bit 5, RXIC, using exclusive or
@@ -202,18 +205,17 @@ UART0_Handler:
 	strb	r1, [r0]
 	
 	; Call simple_read_chracter. Need to load address where we'll be storing value read in
-	ldr 	r0, ptr_to_mydata			; Load address to pass to simple read char func
+	ldr 	r0, ptr_to_user_entry			; Load address to pass to simple read char func
 	bl 		simple_read_character		; Call simple read character function
 
 	; Increment counter for times interrupted
-	ldr 	r0, ptr_to_read_count		; Load address of counter
-	ldr		r1, [r0]					; Load value of counter
-	add 	r1, #1						; Increment counter
-	str		r1, [r0]					; Store counter
+	;ldr 	r0, ptr_to_read_count		; Load address of counter
+	;ldr		r1, [r0]					; Load value of counter
+	;add 	r1, #1						; Increment counter
+	;str		r1, [r0]					; Store counter
 
 	; Restore registers
-	pop 	{r4-r11}
-	pop 	{lr}
+	pop 	{r4-r11, lr}
 
 	BX 		lr       					; Return
 
@@ -236,7 +238,7 @@ UART0_Handler:
 ; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
 ; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
 ;*************************************************************************************************** 
-simple_read_character: 
+simple_read_character:
 	; Load address of UART0 data segment, 0x4000.c000
 	movw 	r1, #0xc000
 	movt 	r1, #0x4000
