@@ -3,7 +3,7 @@
     .global get_sprite
     .global output_string
 
-board_outline:  .string #0xC, 27, "[37;40m",
+board_outline:  .string 0xC, 27, "[?25l", 27, "[37;40m"
                 .string "SCORE:             TIME:     ", 0xA, 0xD
                 .string "-----------------------------", 0xA, 0xD
                 .string "|      |      |      |      |", 0xA, 0xD
@@ -23,23 +23,23 @@ board_outline:  .string #0xC, 27, "[37;40m",
                 .string "|      |      |      |      |", 0xA, 0xD
                 .string "-----------------------------", 0xA, 0xD, 0
 
-shadow_board:   .word   0, 2, 4, 6, 8, 16, 32, 64, 128, 256, 512, 1024
-grid_zero:      .string 27, "[2;1H",0
-grid_one:       .string 27, "[2;8H",0
-grid_two:       .string 27, "[2;15H",0
-grid_three:     .string 27, "[2;22H",0
-grid_four:      .string 27, "[6;1H",0
-grid_five:      .string 27, "[6;8H",0
-grid_six:       .string 27, "[6;15H",0
-grid_seven:     .string 27, "[6;22H",0
-grid_eight:     .string 27, "[10;1H",0
-grid_nine:      .string 27, "[10;8H",0
-grid_ten:       .string 27, "[10;15H",0
-grid_eleven:    .string 27, "[10;22H",0
-grid_twelve:    .string 27, "[14;1H",0
-grid_thirteen:  .string 27, "[14;8H",0
-grid_fourteen:  .string 27, "[14;15H",0
-grid_fifteen:   .string 27, "[14;22H",0
+shadow_board:   .word   0, 2, 4, 0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 0, 1024, 0
+grid_zero:      .string 27, "[3;2H",0
+grid_one:       .string 27, "[3;9H",0
+grid_two:       .string 27, "[3;16H",0
+grid_three:     .string 27, "[3;23H",0
+grid_four:      .string 27, "[7;2H",0
+grid_five:      .string 27, "[7;9H",0
+grid_six:       .string 27, "[7;16H",0
+grid_seven:     .string 27, "[7;23H",0
+grid_eight:     .string 27, "[11;2H",0
+grid_nine:      .string 27, "[11;9H",0
+grid_ten:       .string 27, "[11;16H",0
+grid_eleven:    .string 27, "[11;23H",0
+grid_twelve:    .string 27, "[15;2H",0
+grid_thirteen:  .string 27, "[15;9H",0
+grid_fourteen:  .string 27, "[15;16H",0
+grid_fifteen:   .string 27, "[15;23H",0
 
     .text
     .global     draw_outline
@@ -84,8 +84,10 @@ ptr_to_grid_fifteen:    .word grid_fifteen
 ; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
 ;*************************************************************************************************** 
 draw_outline:
+    push    {lr}
     ldr     r0, ptr_to_board_outline
     bl      output_string
+    pop     {lr}
     mov     pc, lr
 
 ;***************************************************************************************************
