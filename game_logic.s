@@ -3,7 +3,7 @@
     .global get_sprite
     .global output_string
 
-board_outline:  .string 0xC, 27, "[?25l", 27, "[37;40m"
+board_outline:  .string 27, "[?25l", 27, "[37;40m", 27, "[2J"
                 .string "SCORE:             TIME:     ", 0xA, 0xD
                 .string "-----------------------------", 0xA, 0xD
                 .string "|      |      |      |      |", 0xA, 0xD
@@ -23,7 +23,7 @@ board_outline:  .string 0xC, 27, "[?25l", 27, "[37;40m"
                 .string "|      |      |      |      |", 0xA, 0xD
                 .string "-----------------------------", 0xA, 0xD, 0
 
-shadow_board:   .word   0, 2, 4, 0, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 0, 1024, 0
+shadow_board:   .word   0, 2, 0, 128, 0, 128, 0, 64, 2, 128, 0, 1024, 128, 0, 0, 1024
 grid_zero:      .string 27, "[3;2H",0
 grid_one:       .string 27, "[3;9H",0
 grid_two:       .string 27, "[3;16H",0
@@ -40,13 +40,32 @@ grid_twelve:    .string 27, "[15;2H",0
 grid_thirteen:  .string 27, "[15;9H",0
 grid_fourteen:  .string 27, "[15;16H",0
 grid_fifteen:   .string 27, "[15;23H",0
+grid_score:     .string 27, "[1;8H",0
+grid_time:      .string 27, "[1;26H",0
+
+score:          .word   0
+time:           .word   0
+empty_spaces:   .word   16
+movement:       .byte   0
+score_string:   .string "           ",0
+time_string:    .string "           ",0
+
 
     .text
     .global     draw_outline
     .global     draw_board_internal
+    .global     shift_left
+    .global     shift_right
+    .global     shift_up
+    .global     shift_down
 
-ptr_to_board_outline:   .word   board_outline
-ptr_to_shadow_board:    .word   shadow_board
+ptr_to_board_outline:   .word board_outline
+ptr_to_shadow_board:    .word shadow_board
+ptr_to_score:           .word score
+ptr_to_time:            .word time
+ptr_to_empty_spaces:    .word empty_spaces
+ptr_to_score_string:    .word score_string
+ptr_to_time_string:     .word time_string
 
 ;************************************* PTR_TO_GRID_OFFSETS *****************************************
 ptr_to_grid_zero:       .word grid_zero
@@ -65,6 +84,8 @@ ptr_to_grid_twelve:     .word grid_twelve
 ptr_to_grid_thirteen:   .word grid_thirteen
 ptr_to_grid_fourteen:   .word grid_fourteen
 ptr_to_grid_fifteen:    .word grid_fifteen
+ptr_to_grid_score:      .word grid_score
+ptr_to_grid_time:       .word grid_time
 
 ;***************************************************************************************************
 ; Function name: draw_outline
@@ -216,6 +237,381 @@ draw_board_internal:
     pop     {r4}
     pop     {lr}
     
+    mov     pc, lr
+
+;***************************************************************************************************
+; Function name: shift_left
+;
+; Function behavior: Shifts shadow board tiles to the left one space if possible. Keeps track of whether
+; change was made to shadowboard and returns a 0 if no changes were made, indicating that move
+; direction variable should be cleared.
+; 
+; Function inputs: none
+; 
+; Function returns: 
+; r0 : 1 indicates change was made to board, 0 indicates board is in final position
+; 
+; Registers used: 
+; r0 : Return value
+; r1 : points to shadow board base address
+; r2 : current shadow board index value
+; r3 : previous shadow board index value
+; r4 : shadow board index + i * 16
+; r5 : shadow board index + i * 16 + j * 4
+; r6 : outer loop counter
+; r7 : inner loop counter
+; r8 : pointer to score
+; r9 : value of score
+; r10 : address of empty spaces
+; r11 : value of empty spaces 
+;
+; Subroutines called: 
+; none
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+shift_left:
+    push    {lr}
+    push    {r4-r11}
+
+    movw    r0, #0                      ; Set default return value
+    ldr     r1, ptr_to_shadow_board     ; Get shadow board position
+    movw    r6, #0                      ; Outer loop control variable, cycles through rows
+    ldr     r8, ptr_to_score            ; Load address of score
+    ldr     r9, [r8]                    ; Get score value
+    ldr     r10, ptr_to_empty_spaces    ; Load empty spaces addres
+    ldr     r11, [r10]
+; for (int i = 0; i < 4; i++)
+shift_left_outer_loop:
+    lsl     r4, r6, #4                  ; i * 16
+    add     r4, r4, r1                  ; Base address + i * 16, row control
+    movw    r7, #1                      ; Inner loop control variable, cycles columns
+; for (int j = 1; j < 4; j++)           
+shift_left_inner_loop:
+    lsl     r5, r7, #2                   ; j * 4
+    add     r5, r5, r4                  ; index + i* 16 + j*4
+    ldr     r2, [r5]                    ; Get current index value
+    ldr     r3, [r5, #-4]               ; Load previous index value
+    ; Compare train
+    cmp     r2, #0                      ; Is current index == 0?                     
+    beq     shift_left_inner_loop_end   ; Increment and reloop
+    cmp     r3, #0                      ; Is previous index == 0?
+    bne     shift_left_inner_loop_not_zero
+    ; If here, then current index needs to be shifted left because empty value to left
+    ; previous index == current index
+    ; current index == 0
+    str     r2, [r5, #-4]               ; Store current value into previous index
+    str     r3, [r5]                    ; Store 0 at current index
+    movw    r0, #1                      ; Change return value to 1 indicating move made
+    b       shift_left_inner_loop_end   ; Increment and reloop
+shift_left_inner_loop_not_zero:
+    ; If values are equal, add together, update score, otherwise do nothing
+    cmp     r2, r3                      ; r2 == r3
+    bne     shift_left_inner_loop_end   ; If not equal, increment loop and continue
+    add     r2, r2, r3                  ; Add values together
+    add     r9, r9, r2                  ; Update score
+    add     r11, r11, #1                ; Update free spaces
+    str     r2, [r5, #-4]               ; Store new value
+    movw    r2, #0                       ; 0 out r2
+    str     r2, [r5]                    ; Store zero at current index
+    movw    r0, #1                      ; Change return value to 1 indicating move made
+
+shift_left_inner_loop_end:    
+    ; Loop control logic
+    add     r7, #1                      ; increment inner loop
+    cmp     r7, #4                      ; j < 4
+    bne     shift_left_inner_loop       ; Return to inner loop start
+    add     r6, #1                      ; increment outer loop
+    cmp     r6, #4                      ; i < 4
+    bne     shift_left_outer_loop       ; Return to outer loop start
+
+    str     r9, [r8]                    ; Store updated score
+    str		r11, [r10]					; Store updated empty space count
+    ; Pop it like it's haaaawt
+    pop     {r4-r11}
+    pop     {lr}
+    mov     pc, lr
+;***************************************************************************************************
+; Function name: shift_left
+;
+; Function behavior: Shifts shadow board tiles to the right one space if possible. Keeps track of whether
+; change was made to shadowboard and returns a 0 if no changes were made, indicating that move
+; direction variable should be cleared.
+; 
+; Function inputs: none
+; 
+; Function returns: 
+; r0 : 1 indicates change was made to board, 0 indicates board is in final position
+; 
+; Registers used: 
+; r0 : Return value
+; r1 : points to shadow board base address
+; r2 : current shadow board index value
+; r3 : previous shadow board index value
+; r4 : shadow board index + i * 16
+; r5 : shadow board index + i * 16 + j * 4
+; r6 : outer loop counter
+; r7 : inner loop counter
+; r8 : pointer to score
+; r9 : value of score
+; r10 : address of empty spaces
+; r11 : value of empty spaces 
+; 
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+shift_right:
+    push    {lr}
+    push    {r4-r11}
+
+    movw    r0, #0                      ; Set default return value
+    ldr     r1, ptr_to_shadow_board     ; Get shadow board position
+    movw    r6, #0                      ; Outer loop control variable, cycles through rows
+    ldr     r8, ptr_to_score            ; Load address of score
+    ldr     r9, [r8]                    ; Get score value
+    ldr     r10, ptr_to_empty_spaces    ; Load empty spaces addres
+    ldr     r11, [r10]
+; for (int i = 0; i < 4 0; i++)
+shift_right_outer_loop:
+    lsl     r4, r6, #4                  ; i * 16
+    add     r4, r4, r1                  ; Base address + i * 16, row control
+    movw    r7, #2                      ; Inner loop control variable, cycles columns
+; for (int j = 2; j >= 0; j--)           
+shift_right_inner_loop:
+    lsl     r5, r7, #2                  ; j * 4
+    add     r5, r5, r4                  ; index + i* 16 + j*4
+    ldr     r2, [r5]                    ; Get current index value
+    ldr     r3, [r5, #4]                ; Load previous index value
+    ; Compare train
+    cmp     r2, #0                      ; Is current index == 0?                     
+    beq     shift_right_inner_loop_end  ; Increment and reloop
+    cmp     r3, #0                      ; Is previous index == 0?
+    bne     shift_right_inner_loop_not_zero
+    ; If here, then current index needs to be shifted left because empty value to left
+    ; previous index == current index
+    ; current index == 0
+    str     r2, [r5, #4]                ; Store current value into previous index
+    str     r3, [r5]                    ; Store 0 at current index
+    movw    r0, #1                      ; Change return value to 1 indicating move made
+    b       shift_right_inner_loop_end  ; Increment and reloop
+shift_right_inner_loop_not_zero:
+    ; If values are equal, add together, update score, otherwise do nothing
+    cmp     r2, r3                      ; r2 == r3
+    bne     shift_right_inner_loop_end  ; If not equal, increment loop and continue
+    add     r2, r2, r3                  ; Add values together
+    add     r9, r9, r2                  ; Update score
+    add     r11, r11, #1                ; Update free spaces
+    str     r2, [r5, #4]                ; Store new value
+    movw    r2, #0                      ; 0 out r2
+    str     r2, [r5]                    ; Store zero at current index
+    movw    r0, #1                      ; Change return value to 1 indicating move made
+
+shift_right_inner_loop_end:    
+    ; Loop control logic
+    sub     r7, #1                      ; decrement inner loop
+    cmp     r7, #0                      ; j >= 0
+    bge     shift_right_inner_loop      ; Return to inner loop start
+    add     r6, #1                      ; increment outer loop
+    cmp     r6, #4                      ; i < 4
+    bne     shift_right_outer_loop      ; Return to outer loop start
+
+    str     r9, [r8]                    ; Store updated score
+    str		r11, [r10]					; Store updated empty space count
+    ; Pop it like it's haaaawt
+    pop     {r4-r11}
+    pop     {lr}
+    mov     pc, lr
+
+;***************************************************************************************************
+; Function name: shift_up
+;
+; Function behavior: Shifts shadow board tiles up one space if possible. Keeps track of whether
+; change was made to shadowboard and returns a 0 if no changes were made, indicating that move
+; direction variable should be cleared.
+; 
+; Function inputs: none
+; 
+; Function returns: 
+; r0 : 1 indicates change was made to board, 0 indicates board is in final position
+; 
+; Registers used: 
+; r0 : Return value
+; r1 : points to shadow board base address
+; r2 : current shadow board index value
+; r3 : previous shadow board index value
+; r4 : shadow board index + i * 4
+; r5 : shadow board index + i * 4 + j * 16
+; r6 : outer loop counter
+; r7 : inner loop counter
+; r8 : pointer to score
+; r9 : value of score
+; r10 : address of empty spaces
+; r11 : value of empty spaces 
+; 
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+shift_up:
+    push    {lr}
+    push    {r4-r11}
+
+    movw    r0, #0                      ; Set default return value
+    ldr     r1, ptr_to_shadow_board     ; Get shadow board position
+    movw    r6, #0                      ; Outer loop control variable, cycles through rows
+    ldr     r8, ptr_to_score            ; Load address of score
+    ldr     r9, [r8]                    ; Get score value
+    ldr     r10, ptr_to_empty_spaces    ; Load empty spaces addres
+    ldr     r11, [r10]
+; for (int i = 0; i < 4; i++)
+shift_up_outer_loop:
+    lsl     r4, r6, #2                  ; i * 4
+    add     r4, r4, r1                  ; Base address + i * 16, row control
+    movw    r7, #1                      ; Inner loop control variable, cycles columns
+; for (int j = 1; j < 4; j++)           
+shift_up_inner_loop:
+    lsl     r5, r7, #4                  ; j * 16
+    add     r5, r5, r4                  ; index + i* 4 + j*16
+    ldr     r2, [r5]                    ; Get current index value
+    ldr     r3, [r5, #-16]              ; Load previous index value
+    ; Compare train
+    cmp     r2, #0                      ; Is current index == 0?                     
+    beq     shift_up_inner_loop_end     ; Increment and reloop
+    cmp     r3, #0                      ; Is previous index == 0?
+    bne     shift_up_inner_loop_not_zero
+    ; If here, then current index needs to be shifted left because empty value to left
+    ; previous index == current index
+    ; current index == 0
+    str     r2, [r5, #-16]              ; Store current value into previous index
+    str     r3, [r5]                    ; Store 0 at current index
+    movw    r0, #1                      ; Change return value to 1 indicating move made
+    b       shift_up_inner_loop_end     ; Increment and reloop
+shift_up_inner_loop_not_zero:
+    ; If values are equal, add together, update score, otherwise do nothing
+    cmp     r2, r3                      ; r2 == r3
+    bne     shift_up_inner_loop_end     ; If not equal, increment loop and continue
+    add     r2, r2, r3                  ; Add values together
+    add     r9, r9, r2                  ; Update score
+    add     r11, r11, #1                ; Update free spaces
+    str     r2, [r5, #-16]              ; Store new value
+    movw    r2, #0                      ; 0 out r2
+    str     r2, [r5]                    ; Store zero at current index
+    movw    r0, #1                      ; Change return value to 1 indicating move made
+
+shift_up_inner_loop_end:    
+    ; Loop control logic
+    add     r7, #1                      ; decrement inner loop
+    cmp     r7, #4                      ; j < 4
+    bne     shift_up_inner_loop         ; Return to inner loop start
+    add     r6, #1                      ; increment outer loop
+    cmp     r6, #4                      ; i < 4
+    bne     shift_up_outer_loop         ; Return to outer loop start
+
+    str     r9, [r8]                    ; Store updated score
+    str		r11, [r10]					; Store updated empty space count
+    ; Pop it like it's haaaawt
+    pop     {r4-r11}
+    pop     {lr}
+    mov     pc, lr
+
+;***************************************************************************************************
+; Function name: shift_down
+;
+; Function behavior: Shifts shadow board tiles down one space if possible. Keeps track of whether
+; change was made to shadowboard and returns a 0 if no changes were made, indicating that move
+; direction variable should be cleared.
+; 
+; Function inputs: none
+; 
+; Function returns: 
+; r0 : 1 indicates change was made to board, 0 indicates board is in final position
+; 
+; Registers used: 
+; r0 : Return value
+; r1 : points to shadow board base address
+; r2 : current shadow board index value
+; r3 : previous shadow board index value
+; r4 : shadow board index + i * 4
+; r5 : shadow board index + i * 4 + j * 16
+; r6 : outer loop counter
+; r7 : inner loop counter
+; r8 : pointer to score
+; r9 : value of score
+; r10 : address of empty spaces
+; r11 : value of empty spaces 
+; 
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;***************************************************************************************************
+shift_down:
+    push    {lr}
+    push    {r4-r11}
+
+    movw    r0, #0                      ; Set default return value
+    ldr     r1, ptr_to_shadow_board     ; Get shadow board position
+    movw    r6, #0                      ; Outer loop control variable, cycles through rows
+    ldr     r8, ptr_to_score            ; Load address of score
+    ldr     r9, [r8]                    ; Get score value
+    ldr     r10, ptr_to_empty_spaces    ; Load empty spaces addres
+    ldr     r11, [r10]
+; for (int i = 0; i < 4; i++)
+shift_down_outer_loop:
+    lsl     r4, r6, #2                  ; i * 4
+    add     r4, r4, r1                  ; Base address + i * 16, row control
+    movw    r7, #2                      ; Inner loop control variable, cycles columns
+; for (int j = 2; j >= 0; j++)           
+shift_down_inner_loop:
+    lsl     r5, r7, #4                  ; j * 16
+    add     r5, r5, r4                  ; index + i * 4 + j * 16
+    ldr     r2, [r5]                    ; Get current index value
+    ldr     r3, [r5, #16]               ; Load previous index value
+    ; Compare train
+    cmp     r2, #0                      ; Is current index == 0?                     
+    beq     shift_down_inner_loop_end   ; Increment and reloop
+    cmp     r3, #0                      ; Is previous index == 0?
+    bne     shift_down_inner_loop_not_zero
+    ; If here, then current index needs to be shifted left because empty value to left
+    ; previous index == current index
+    ; current index == 0
+    str     r2, [r5, #16]               ; Store current value into previous index
+    str     r3, [r5]                    ; Store 0 at current index
+    movw    r0, #1                      ; Change return value to 1 indicating move made
+    b       shift_down_inner_loop_end   ; Increment and reloop
+shift_down_inner_loop_not_zero:
+    ; If values are equal, add together, update score, otherwise do nothing
+    cmp     r2, r3                      ; r2 == r3
+    bne     shift_down_inner_loop_end   ; If not equal, increment loop and continue
+    add     r2, r2, r3                  ; Add values together
+    add     r9, r9, r2                  ; Update score
+    add     r11, r11, #1                ; Update free spaces
+    str     r2, [r5, #16]               ; Store new value
+    movw    r2, #0                      ; 0 out r2
+    str     r2, [r5]                    ; Store zero at current index
+    movw    r0, #1                      ; Change return value to 1 indicating move made
+
+shift_down_inner_loop_end:    
+    ; Loop control logic
+    sub     r7, #1                      ; decrement inner loop
+    cmp     r7, #0                      ; j >= 0
+    bge     shift_down_inner_loop       ; Return to inner loop start
+    add     r6, #1                      ; increment outer loop
+    cmp     r6, #4                      ; i < 4
+    bne     shift_down_outer_loop       ; Return to outer loop start
+
+    str     r9, [r8]                    ; Store updated score
+    str		r11, [r10]					; Store updated empty space count
+    ; Pop it like it's haaaawt
+    pop     {r4-r11}
+    pop     {lr}
     mov     pc, lr
 
     .end
