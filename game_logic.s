@@ -2,8 +2,9 @@
     
     .global get_sprite
     .global output_string
+    .global int2string
 
-board_outline:  .string 27, "[?25l", 27, "[37;40m", 27, "[2J"
+board_outline:  .string 27, "[?25l", 27, "[37;40m", 27, "[1;1H", 27, "[J"
                 .string "SCORE:             TIME:     ", 0xA, 0xD
                 .string "-----------------------------", 0xA, 0xD
                 .string "|      |      |      |      |", 0xA, 0xD
@@ -43,13 +44,14 @@ grid_fifteen:   .string 27, "[15;23H",0
 grid_score:     .string 27, "[1;8H",0
 grid_time:      .string 27, "[1;26H",0
 
+tick:           .byte   1
 score:          .word   0
 time:           .word   0
 empty_spaces:   .word   16
 movement:       .byte   0
 score_string:   .string "           ",0
 time_string:    .string "           ",0
-
+white_on_black: .string 27, "[37;40m",0
 
     .text
     .global     draw_outline
@@ -58,6 +60,9 @@ time_string:    .string "           ",0
     .global     shift_right
     .global     shift_up
     .global     shift_down
+    .global     print_time_score
+    .global     update_time
+    .global     reset_game
 
 ptr_to_board_outline:   .word board_outline
 ptr_to_shadow_board:    .word shadow_board
@@ -65,7 +70,9 @@ ptr_to_score:           .word score
 ptr_to_time:            .word time
 ptr_to_empty_spaces:    .word empty_spaces
 ptr_to_score_string:    .word score_string
-ptr_to_time_string:     .word time_string
+ptr_to_time_string:     .word time_string 
+ptr_to_white_on_black:  .word white_on_black
+ptr_to_tick:            .word tick
 
 ;************************************* PTR_TO_GRID_OFFSETS *****************************************
 ptr_to_grid_zero:       .word grid_zero
@@ -614,4 +621,131 @@ shift_down_inner_loop_end:
     pop     {lr}
     mov     pc, lr
 
+;***************************************************************************************************
+; Function name: print_time_score
+; Function behavior: Converts score and time elapsed to strings and prints them to proper place on
+; board
+; 
+; Function inputs: none
+; 
+; Function returns: none
+; 
+; Registers used: 
+; r0 : Used to pass variables to called subroutions
+; r1 : Holds string address for int2string
+; 
+; Subroutines called: 
+; output_string | int2string
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+print_time_score:
+    push    {lr}
+    ; Reset ANSI for black background, white text
+    ldr     r0, ptr_to_white_on_black
+    bl      output_string
+
+    ; Move cursor to score position
+    ldr     r0, ptr_to_grid_score
+    bl      output_string
+
+    ; Convert score to string and print.
+    ldr     r0, ptr_to_score
+    ldr     r0, [r0]
+    ldr     r1, ptr_to_score_string
+    bl      int2string
+    ldr     r0, ptr_to_score_string
+    bl      output_string
+
+    ; Move cursor to time position
+    ldr     r0, ptr_to_grid_time
+    bl      output_string
+
+    ; Convert time to string and print
+    ldr     r0, ptr_to_time
+    ldr     r0, [r0]
+    ldr     r1, ptr_to_time_string
+    bl      int2string
+    ldr     r0, ptr_to_time_string
+    bl      output_string
+    
+    pop     {lr}
+;***************************************************************************************************
+; Function name: update_time
+; Function behavior: Toggles tick between 1 and 0, adds value to timer
+; 
+; Function inputs: none
+; 
+; Function returns: none
+; 
+; Registers used: 
+; r0 : address of tick 
+; r1 : address of time
+; r2 : value of tick
+; r3 : value of time
+;
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+update_time:
+    ldr     r0, ptr_to_tick
+    ldrb    r2, [r0]
+    eor     r2, #1
+    strb    r2, [r0]
+    ldr     r1, ptr_to_time
+    ldr     r3, [r1]
+    add     r3, r3, r2
+    str     r3, [r1]
+    mov     pc, lr
+
+
+reset_game:
+    push    {lr}
+
+    ; Reset game control variables to their defaults
+    movw    r1, #1
+    ; Tick starts a 1 (initial half second sets to 0, first second sets to 1)
+    ldr     r0, ptr_to_tick
+    strb    r1, [r0]
+
+    ; Score and time get set to 0
+    movw    r1, #0
+    ldr     r0, ptr_to_score
+    str     r1, [r0]
+    ldr     r0, ptr_to_time
+    str     r1, [r0]
+
+    ; Empty spaces gets reset to 16
+    movw    r1, #16
+    ldr     r0, ptr_to_empty_spaces
+    str     r1, [r0]
+
+    ; Set all indices of shadow board to 0
+    ; TODO: Create loop to set shadowboard_values to 0
+
+    ; TODO: Write function to set two initial game pieces
+
+    ; Draw board to screen
+    bl      draw_outline
+    bl      draw_board_internal
+    bl      print_time_score
+
+    ;Start frame timer
+	;set r1 to timer 0 base address
+	MOV     r1, #0x0000
+	MOVT    r1, #0x4003
+
+	;load current status
+	LDRB    r0, [r1, #0x00C]
+	ORR     r0, r0, #0x3		        ;set bit 0 to 1, set bit 1 to 1 to allow debugger to stop timer
+	STRB    r0, [r1, #0x00C]          ;enable timer 0 (A) for use
+
+    pop     {lr}
+    mov     pc, lr
+
     .end
+0x2000068B 

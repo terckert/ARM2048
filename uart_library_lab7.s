@@ -1,14 +1,17 @@
     .data
 mydata:         .byte   0
-
+shared_pointer: .word 	0
 
     .text
     
     .global uart_init
+	.global uart_interrupt_init
+	.global UART0_Handler
     .global output_string
 	.global int2string
 
-ptr_to_mydata:  .word   mydata
+ptr_to_mydata:  	.word mydata
+ptr_to_shared_ptr:	.word shared_pointer
 
 ;***************************************************************************************************
 ; Function name: uart_init
@@ -107,6 +110,191 @@ uart_init:
 
 	pop 	{lr}  						; Restore lr from stack
 	mov 	pc, lr     
+
+;***************************************************************************************************
+; Function name: uart_interrupt_init
+; Function behavior: Initializes interrupt method to detect when key has been entered into putty
+; terminal. Function assumes that uart_init has already been called. 
+; 
+; Function inputs: 
+; r0 : Address of shared variable direction from lab7.s
+; 
+; Function returns: none
+; 
+; Registers used 
+; r4 : Holds address to read from/write to
+; r5 : Holds values read from/stored to memory
+; r6 : Holds 32 bit value to be written to EOOO.E100
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+uart_interrupt_init:
+	push 	{lr}
+	; Push registers used in function
+	push 	{r4, r5}
+	
+	ldr 	r1, ptr_to_shared_ptr
+	str		r0, [r1]
+
+	; Set the Receive Interrupt bit (RXIM - bit 5) in UART Interrupt mask register. Other
+	; bits in register may have already been set, so we load value and use or to set mask bit.
+	; 1 unmasks bit to allow bit to be used as an interrupt.
+	
+	; Load UART0 base address
+	movw 	r4, #0xC000
+	movt 	r4, #0x4000
+	
+	; Offset - #0x38  Mask - 0x10
+	ldrb 	r5, [r4, #0x38]
+	orr 	r5, r5, #0x10
+	strb	r5, [r4, #0x38]
+	
+	; Configure processor to allow UART0 to interrupt operation. Bit 5 needs to be set in 
+	; enable register at base register - #0xE000.E000 offset - #0x100, bit 6 - #0x20
+	movw 	r4, #0xE100
+	movt	r4, #0xE000
+	
+	; Load current values so we don't overwrite anything previously set and orr with 0x40,
+	; then store again.
+	ldr 	r5, [r4]
+	orr		r5, r5, #0x20
+	str		r5, [r4]
+
+	; Pop used registers
+	pop 	{r4, r5}
+
+	pop		{lr}
+	mov 	pc, lr
+
+;***************************************************************************************************
+; Function name: UART0_Handler
+; Function behavior: Clears RXIC interrupt pin and calls the simple_read_character function to store
+; the value of the keystroke that initiated the interrupt. Toggles the WASD flags at shared_pointer. 
+; 
+; Function inputs: none
+; 
+; Function returns: none
+; 
+; Registers used: 
+; r0 : Stores addresses
+; r1 : Used for value store and manipulate
+; 
+; Subroutines called: 
+; simple_read_character
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+UART0_Handler: 
+	push 	{lr}
+	; Push registers 4 - 11 to preserve values
+	push 	{r4-r11}
+	
+	; Load address of UART interrupt clear register (UARTICR): #0x4000.C044
+	; Load value from register and clear bit 5, RXIC, using exclusive or
+	movw 	r0, #0xc044
+	movt	r0, #0x4000
+	ldrb	r1, [r0]
+	eor 	r1, r1, #0x10
+	strb	r1, [r0]
+	
+	; Call simple_read_chracter. Need to load address where we'll be storing value read in
+	bl 		simple_read_character		; Call simple read character function
+
+	; Check if current direction is 0 (which will allow direction overwrite)
+	ldr 	r1, ptr_to_shared_ptr
+	ldr 	r1, [r1]
+	ldrb 	r2, [r1]
+	cmp 	r2, #0
+	bne 	UART0_Handler_end
+	; Check if read character was 'w'
+    cmp     r0, #'w'						
+	bne 	UART0_Handler_W 
+	movw 	r0, #8                   
+	b 		UART0_Handler_update_direction
+UART0_Handler_W:
+    cmp     r0, #'W'						
+	bne 	UART0_Handler_a                    
+	movw 	r0, #8                   
+	b 		UART0_Handler_update_direction
+UART0_Handler_a:
+    cmp     r0, #'a'						
+	bne 	UART0_Handler_A                    
+	movw 	r0, #4                   
+	b 		UART0_Handler_update_direction
+UART0_Handler_A:
+    cmp     r0, #'A'						
+	bne 	UART0_Handler_s                   
+	movw 	r0, #4                   
+	b 		UART0_Handler_update_direction
+
+UART0_Handler_s:
+    cmp     r0, #'s'						
+	bne 	UART0_Handler_S                    
+	movw 	r0, #2                   
+	b 		UART0_Handler_update_direction
+
+UART0_Handler_S:
+    cmp     r0, #'S'						
+	bne 	UART0_Handler_d                    
+	movw 	r0, #2                   
+	b 		UART0_Handler_update_direction
+
+UART0_Handler_d:
+    cmp     r0, #'d'						
+	bne 	UART0_Handler_D                    
+	movw 	r0, #1                   
+	b 		UART0_Handler_update_direction
+
+UART0_Handler_D:
+    cmp     r0, #'D'						
+	bne 	UART0_Handler_end                    
+	movw 	r0, #1                   
+
+UART0_Handler_update_direction:
+    ; Store new direction variable
+    strb    r0, [r1]                    ; Store new value
+
+UART0_Handler_end:
+
+	; Restore registers
+	pop 	{r4-r11}
+	pop 	{lr}
+
+	BX 		lr       					; Return
+
+;***************************************************************************************************
+; Function name: simple_read_character
+; Function behavior: Reads the character from putty terminal and stores it in address passed in r0.
+; 
+; Function inputs: 
+; r0 : Address to store character at
+; 
+; Function returns: 
+; r0 : keystroke value
+; 
+; Registers used: 
+; r1 : Address of UART0 data
+; r2 : Address of mydata
+; 
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+simple_read_character: 
+	; Load address of UART0 data segment, 0x4000.c000
+	movw 	r1, #0xc000
+	movt 	r1, #0x4000
+
+    ldr     r2, ptr_to_mydata
+
+	ldrb	r0, [r1]
+	strb 	r0, [r2]
+
+	MOV 	PC,LR      	; Return
 
 ;************************************************************************************************** 
 ; Function name: output_character
