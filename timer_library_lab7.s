@@ -9,6 +9,8 @@
     .global     print_time_score
     .global     update_time
 	.global		set_new_block
+	.global 	check_game_status
+	.global 	pause_game
 
 shift_direction:    .word   0
 
@@ -96,8 +98,8 @@ timer0_interrupt_init:
 	;set interval period
 	;load current status
 	LDR     r0, [r1, #GPTMTAILR]
-	MOV     r0, #0x9680				    ;set r2 to 10 million
-	MOVT    r0, #0x0098			        ;for 2 timer interrupts a second
+	MOV     r0, #0x1200				    ;set r2 to 8 million
+	MOVT    r0, #0x007A			        ;for 2 timer interrupts a second
 	STR     r0, [r1, #GPTMTAILR] 	    ;set interval period for timer A
 
 	;set up to interrupt processor
@@ -261,7 +263,15 @@ Timer_Handler_post_shift:
     bne     Timer_Handler_print_updated_board
     ; Store 0 in direction controller so user can select new direction. Return from handler.
     strb    r0, [r5]
-    bl 		set_new_block
+	bl 		set_new_block
+	; Are there any more valid moves?
+	bl 		check_game_status
+	cmp 	r0, #0						; If status returned is 0, game is ongoing
+    beq 	Timer_Handler_print_updated_board
+	; Otherwise game is over. Pause game with appropriate message (value returned by check_game_status)
+	bl 		pause_game
+	b 		Timer_Handler_return
+
 Timer_Handler_print_updated_board:
     bl      draw_board_internal
     ; Insert game status check here.

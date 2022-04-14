@@ -9,6 +9,7 @@ shared_pointer: .word 	0
 	.global UART0_Handler
     .global output_string
 	.global int2string
+	.global return_stored_character
 
 ptr_to_mydata:  	.word mydata
 ptr_to_shared_ptr:	.word shared_pointer
@@ -199,7 +200,7 @@ UART0_Handler:
 	eor 	r1, r1, #0x10
 	strb	r1, [r0]
 	
-	; Call simple_read_chracter. Need to load address where we'll be storing value read in
+	; Call simple_read_character. Need to load address where we'll be storing value read in
 	bl 		simple_read_character		; Call simple read character function
 
 	; Check if current direction is 0 (which will allow direction overwrite)
@@ -589,5 +590,29 @@ int2string_finish_and_return:
 	POP 	{lr}  						; Restore lr from stack
 	mov 	pc, lr
 
+;***************************************************************************************************
+; Function name: return_stored_character
+; Function behavior: Gets the character from my data and returns to caller. Used when polling from 
+; main menu when program starts.
+; 
+; Function inputs: none
+; 
+; Function returns: 
+; r0 : value stored in mydata
+; 
+; Registers used: 
+; r0 : dereferences pointer and returns value
+; 
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+return_stored_character
+	ldr 	r0, ptr_to_mydata
+	ldrb	r0, [r0]
 
-    .end
+	mov 	pc, lr
+    
+	.end

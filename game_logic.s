@@ -3,6 +3,8 @@
     .global get_sprite
     .global output_string
     .global int2string
+    .global illuminate_RGB_LED
+    .global read_from_push_btns
 
 board_outline:  .string 27, "[?25l", 27, "[37;40m", 27, "[1;1H", 27, "[J"
                 .string "SCORE:             TIME:     ", 0xA, 0xD
@@ -24,6 +26,38 @@ board_outline:  .string 27, "[?25l", 27, "[37;40m", 27, "[1;1H", 27, "[J"
                 .string "|      |      |      |      |", 0xA, 0xD
                 .string "-----------------------------", 0xA, 0xD, 0
 
+score_line:     .string 27, "[?25l", 27, "[37;40m", 27, "[1;1H", 27, "[J"
+                .string "SCORE:             TIME:     ", 0xA, 0xD, 0
+
+you_lose_loser: .string 27, "[2;1H"
+                .string "          GAME OVER          ", 0xA, 0xD
+                .string "          YOU LOST!          ", 0xA, 0xD, 0
+
+you_cheated:    .string 27, "[2;1H"
+                .string "          GAME OVER          ", 0xA, 0xD
+                .string "          YOU WON!           ", 0xA, 0xD, 0 
+
+game_paused:    .string 27, "[?25l", 27, "[37;40m", 27, "[1;1H", 27, "[J"
+                .string "           PAUSED            ", 0xA, 0xD, 0
+
+save_cursor_pos:.string 27, "[s", 0
+rest_cursor_pos:.string 27, "[u", 0
+
+main_pause_menu:.string 27, "[4;1H"
+                .string "        SW2: Quit            ", 0xA, 0xD
+                .string "        SW3: Reset           ", 0xA, 0xD
+                .string "        SW4: Continue        ", 0xA, 0xD
+                .string "        SW5: Cheat           ", 0xA, 0xD, 0
+
+sub_pause_menu: .string 27, "[4;1H"
+                .string "        SW2: 2048            ", 0xA, 0xD
+                .string "        SW3: 1024            ", 0xA, 0xD
+                .string "        SW4: 512             ", 0xA, 0xD
+                .string "        SW5: 256             ", 0xA, 0xD, 0
+
+screencap:      .string 27,"[?47h", 0
+screenres:      .string 27,"[?47l", 0
+
 shadow_board:   .word   0, 2, 0, 128, 0, 128, 0, 64, 2, 128, 0, 1024, 128, 0, 0, 1024
 grid_zero:      .string 27, "[3;2H",0
 grid_one:       .string 27, "[3;9H",0
@@ -44,6 +78,7 @@ grid_fifteen:   .string 27, "[15;23H",0
 grid_score:     .string 27, "[1;8H",0
 grid_time:      .string 27, "[1;26H",0
 
+game_state:     .byte   0
 win_score:      .word   2048
 tick:           .byte   1
 score:          .word   0
@@ -65,6 +100,9 @@ white_on_black: .string 27, "[37;40m",0
     .global     update_time
     .global     reset_game
     .global     set_new_block
+    .global     check_game_status
+    .global     pause_game
+    .global     return_game_state
 
 ptr_to_board_outline:   .word board_outline
 ptr_to_shadow_board:    .word shadow_board
@@ -76,6 +114,17 @@ ptr_to_time_string:     .word time_string
 ptr_to_white_on_black:  .word white_on_black
 ptr_to_tick:            .word tick
 ptr_to_win_score:       .word win_score
+ptr_to_score_line:      .word score_line
+ptr_to_lose:            .word you_lose_loser
+ptr_to_win:             .word you_cheated
+ptr_to_pause:           .word game_paused
+ptr_to_save:            .word save_cursor_pos
+ptr_to_rest:            .word rest_cursor_pos
+ptr_to_main_pause_menu: .word main_pause_menu
+ptr_to_sub_pause_menu:  .word sub_pause_menu
+ptr_to_screencap        .word screencap
+ptr_to_screenres        .word screenres
+ptr_to_game_state       .word game_state   
 
 ;************************************* PTR_TO_GRID_OFFSETS *****************************************
 ptr_to_grid_zero:       .word grid_zero
@@ -712,8 +761,9 @@ update_time:
 ; Function behavior: Resets the game to its start value. Resets board indices to all 0's. Draws
 ; initial two tiles. Starts timer.
 ;
-; Function inputs: none
-; 
+; Function inputs: 
+; r0 : direction variable for reset
+;
 ; Function returns: none
 ; 
 ; Registers used: 
@@ -727,6 +777,10 @@ update_time:
 ;*************************************************************************************************** 
 reset_game:
     push    {lr}
+    ; Reset shift direction to null
+    movw    r1, #0
+    strb    r1, [r0]
+
 
     ; Reset game control variables to their defaults
     movw    r1, #1
@@ -765,6 +819,7 @@ reset_game_loop:
     bl      draw_outline
     bl      draw_board_internal
     bl      print_time_score
+    bl      shine_little_light
 
     ;Start frame timer
 	;set r1 to timer 0 base address
@@ -804,6 +859,13 @@ reset_game_loop:
 ;*************************************************************************************************** 
 set_new_block:
     push    {r4-r5, lr}
+
+    ; Edge case. No empty spaces available, but there is still valid moves to be made
+    ldr     r0, ptr_to_empty_spaces
+    ldr     r0, [r0]
+    cmp     r0, #0
+    beq     set_new_block_edge_case
+
     ; Load address of shadow board
     ldr     r0, ptr_to_shadow_board
     ; Load address of timer 1 counter. Uses register GPTMTAV (0x050) which shows the free running value
@@ -835,11 +897,11 @@ set_new_block_index:
     mul     r3, r3, r4                  ; m * floor(n/m)
     sub     r1, r1, r3                  ; n - m * floor(n/m)
     cmp     r1, #3                      ; mod <= 3
-    ble     generate_four           
+    ble     set_new_block_generate_four           
     mov     r1, #2
     b       set_new_block_store_and_return
 
-generate_four:
+set_new_block_generate_four:
     mov     r1, #4
 
 set_new_block_store_and_return:
@@ -847,7 +909,10 @@ set_new_block_store_and_return:
     ldr     r0, ptr_to_empty_spaces     ; Decrement empty spaces
     ldr     r1, [r0]                    ; Get current value
     sub     r1, #1                      ; Decrement
-    str     r1, [r0]                    ; Store new value   
+    str     r1, [r0]                    ; Store new value
+
+    ; If we cannot generate a block and the user selects a bad direction, this stops infinite looping
+set_new_block_edge_case:   
 
     pop     {r4-r5, lr}
     mov     pc, lr
@@ -856,14 +921,344 @@ set_new_block_store_and_return:
 ; Function name: check_game_status
 ; Function behavior: Checks win/lose conditions. Returns a 1 if game is over and player lost, a 2 if
 ; game is over and player won (HA!), and a 0 if game is not over.
-; 
+; WIN: Player has met the score threshold
+; LOSE: No more valid moves (board is full)
 ; Function inputs: none
 ; 
 ; Function returns: 
 ; r0 : 0 - game ongoing, 1 - game over lost, 2 - game over won
 ; 
 ; Registers used: 
+; r0 : Holds win score
+; r1 : Shadow board base address
+; r2 : Loop counter
+; r3 : Shadow board index value
+; r4 : Outer loop counter, valid move loops
+; r5 : Inner loop counter, valid move loops
+; r6 : Current index value for comparison
+; r7 : Next index value for comparison
+;
+; Subroutines called: none 
 ; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+check_game_status:
+    push    {r4-r7}
+    ; Scan board to see if target tile has been created.
+    ldr     r0, ptr_to_win_score
+    ldr     r0, [r0]                    ; Load win score
+    ldr     r1, ptr_to_shadow_board     
+    movw    r2, #0                      ; Initialize loop counter
+    
+    ; for (int i = 0; i <=60; i += 4)
+check_game_status_win_loop:
+    ldr     r3, [r1, r2]                ; Load current index value
+    cmp     r0, r3                      ; If win score == index value, user has won
+    beq     check_game_status_return_2
+    add     r2, #4                      ; Increment loop counter
+    cmp     r2, #60                     ; i <= 60, reloop
+    ble     check_game_status_win_loop
+
+    ; Check if there are empty spaces for new block generation
+    ldr     r0, ptr_to_empty_spaces     ; Check if board is full
+    ldr     r0, [r0]                    ; Get empty spaces value
+    cmp     r0, #0                      ; empty space != 0?
+    bne     check_game_status_return_0  ; Return 0, game not over.
+    
+    ; Loop through shadow board to find a valid move (tiles of equal value next to each other)
+    ; If valid move can be found, game can continue, return 0, otherwise returns 1
+    ; Checking rows
+    ldr     r0, ptr_to_shadow_board
+    movw    r4, #0                      ; i = 0
+    ; for (int i = 0; i < 3; i++)
+check_game_status_row_outer_loop:
+    lsl     r1, r4, #4                  ; i * 16
+    add     r2, r1, r0                  ; ptr + offset(i * 16)
+    movw    r5, #0                      ; j = 0
+    ; for (int j = 0; j < 3; j++)
+check_game_status_row_inner_loop:
+    lsl     r1, r5, #2                  ; j * 4
+    add     r1, r1, r2                  ; ptr + offset(i * 16) + (j * 4)
+    ldr     r6, [r1]                    ; Current index
+    ldr     r7, [r1, #4]                ; Next index
+    cmp     r6, r7                      ; If values are equal, game continues
+    beq     check_game_status_return_0  ; return 0
+    add     r5, #1                      ; j++
+    cmp     r5, #3                      ; j < 3
+    blt     check_game_status_row_inner_loop
+    add     r4, #1                      ; i++
+    cmp     r4, #3                      ; i < 3
+    blt     check_game_status_row_outer_loop
+
+    ; Check columns, if match is not found in this loop then return 1, no more valid moves
+    movw    r4, #0                      ; i = 0
+    ; for (int i = 0; i < 3; i++)
+check_game_status_column_outer_loop:
+    lsl     r1, r4, #2                  ; i * 4
+    add     r2, r1, r0                  ; ptr + offset(i * 4)
+    movw    r5, #0                      ; j = 0
+    ; for (int j = 0; j < 3; j++)
+check_game_status_column_inner_loop:
+    lsl     r1, r5, #4                  ; j * 16
+    add     r1, r1, r2                  ; ptr + offset(i * 4) + (j * 16)
+    ldr     r6, [r1]                    ; Current index
+    ldr     r7, [r1, #16]                ; Next index
+    cmp     r6, r7                      ; If values are equal, game continues
+    beq     check_game_status_return_0  ; return 0
+    add     r5, #1                      ; j++
+    cmp     r5, #3                      ; j < 3
+    blt     check_game_status_column_inner_loop
+    add     r4, #1                      ; i++
+    cmp     r4, #3                      ; i < 3
+    blt     check_game_status_column_outer_loop    
+
+    ; No more valid moves. User has lost game.
+    movw    r0, #1     
+    b       check_game_status_return
+    ; User has won game
+check_game_status_return_2:
+    movw    r0, #2
+    b       check_game_status_return
+    ; Game is still ongoing, return 0
+check_game_status_return_0:
+    movw    r0, #0
+
+check_game_status_return:
+    pop     {r4-r7}
+    mov     pc, lr
+
+;***************************************************************************************************
+; Function name: pause_game
+; Function behavior: Function prints message based on parameter passed in (see below). Then presents
+; user with options. User uses switches on daughter board to navigate the menu. 
+; Parameter values:
+; 0 - Normal Pause menu
+; 1 - Game lost menu
+; 2 - Game won menu
+; 
+; Function inputs: 
+; r0 : pause menu value
+; 
+; Function returns: none 
+; 
+; Registers used: 
+; r0 : 
+; r1 : 
+; r2 : 
+; 
+; Subroutines called: 
+; illuminate_rgb_led | output_string | print_time_and_score | reset_game | shine_little_light
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+pause_game:
+    push    {lr}
+
+    ; Turn TIMER0 off
+    movw    r1, #0x000c                 ; load lower address
+    movt    r1, #0x4003                 ; load upper address
+    ldrb    r2, [r1]                    ; get current value
+    eor     r2, #3                      ; Turns off bit 0 and 1
+    strb    r2, [r1]                    ; store new value
+
+    ; Store parameter to stack since we're about to go on a subroutine spree!
+    push    {r0}                        
+
+    movw    r0, #0                      ; RGB turn off value
+    bl      illuminate_RGB_LED          ; Turn that bish the fugg awph
+
+    ; Save current cursor position
+    ldr     r0, ptr_to_save             ; Save cursor position
+    bl      output_string               ; Save that bish
+    
+    ; Save current screen               
+    ldr     r0, ptr_to_screencap        ; Save screen before printint new shiz
+    bl      output_string
+
+    pop     {r0}
+    ; Switch statement to print reason for pause (Game won/lost or standard pause)
+    ; Game ongoing
+    cmp     r0, #0
+    bne     pause_game_lost    
+    ldr     r0, ptr_to_pause            ; Print pause message
+    bl      output_string
+    b       pause_game_main_menu
+
+pause_game_lost:
+    ; Game lost (HA! Loser!)
+    cmp     r0, #1
+    bne     pause_game_won
+    mov     r0, #2                      ; Load value for red
+    bl      illuminate_RGB_LED          ; Turn on red light
+    ldr     r0, ptr_to_score_line       ; Print score line
+    bl      output_string          
+    bl      print_time_score            ; Print time and score
+    ldr     r0, ptr_to_lose             ; Print lose message
+    bl      output_string               
+    b       pause_game_main_menu
+
+pause_game_won:
+    mov     r0, #8                      ; Load value for green
+    bl      illuminate_RGB_LED          ; Turn on green light
+    ldr     r0, ptr_to_score_line       ; Print score line
+    bl      output_string   
+    bl      print_time_score            ; Print time and score        
+    ldr     r0, ptr_to_win              ; Print win message
+    bl      output_string               
+
+pause_game_main_menu:
+    ldr     r0, ptr_to_main_pause_menu  ; Print main pause menu
+    bl      output_string               
+
+    ; Loop until sw2-5 polling returns a value.
+pause_game_main_menu_loop:
+    bl      read_from_push_btns
+    cmp     r0, #0
+    beq     pause_game_main_menu_loop
+
+    cmp     r0, #8                      ; SW2 - quit
+    bne     pause_game_main_menu_sw3
+    ldr     r0, ptr_to_game_state       ; Update game state variable.
+    movw    r1, #1                      ; 1 -> game end
+    strb    r1, [r0]                    ; Update game state
+    b       pause_game_return           ; End subroutine
+
+pause_game_main_menu_sw3:
+    cmp     r0, #4                      ; SW3 - restart
+    bne     pause_game_main_menu_sw4
+    bl      reset_game                  
+    b       pause_game_return           ; End subroutine
+
+pause_game_main_menu_sw4:
+    cmp     r0, #2                      ; SW4 - Continue
+    bne     pause_game_main_menu_sw5
+    b       pause_game_restore          ; Restore board state
+
+pause_game_main_menu_sw5:               
+    ; Print submenu allowing the user to change the win condition
+    ldr     r0, ptr_to_sub_pause_menu   ; Print submenu
+    bl      output_string
+
+    ; Loop until sw2-5 polling returns a value
+pause_game_sub_menu_loop:
+    bl      read_from_push_btns
+    cmp     r0, #0
+    beq     pause_game_sub_menu_loop
+
+    ldr     r1, ptr_to_win_score
+    cmp     r0, #8                      ; SW2 - 2048
+    bne     pause_game_sub_menu_sw3
+    movw    r0, #2048
+    str     r0, [r1]
+    b       pause_game_restore
+
+pause_game_sub_menu_sw3:
+    cmp     r0, #4                      ; SW2 - 1024
+    bne     pause_game_sub_menu_sw4
+    movw    r0, #1024
+    str     r0, [r1]
+    b       pause_game_restore
+    
+pause_game_sub_menu_sw4:
+    cmp     r0, #2                      ; SW2 - 512
+    bne     pause_game_sub_menu_sw5
+    movw    r0, #512
+    str     r0, [r1]
+    b       pause_game_restore
+    
+pause_game_sub_menu_sw5:                ; SW5 - 256
+    movw    r0, #256
+    str     r0, [r1]
+
+pause_game_restore:
+    bl      shine_little_light
+    
+    ; Restore screen
+    ldr     r0, ptr_to_screenres
+    bl      output_string
+    
+    ; Restore cursor
+    ldr     r0, ptr_to_rest
+    bl      output_string
+
+
+    ;Start frame timer if needed, does nothing if already started by reset
+	;set r1 to timer 0 base address
+	MOV     r1, #0x000c
+	MOVT    r1, #0x4003
+
+	;load current status
+	LDRB    r0, [r1]
+	ORR     r0, r0, #0x3		        ; set bit 0 to 1, set bit 1 to 1 to allow debugger to stop timer
+	STRB    r0, [r1]                    ; enable timer 0 (A) for use
+
+pause_game_return:
+
+    pop     {lr}
+    mov     pc, lr
+
+;***************************************************************************************************
+; Function name: shine_little_light
+; Function behavior: Turns on the LED based on the score needed to win the game.
+; 2048 - Yellow (6)
+; 1024 - Purple (10)
+; 512  - White (14)
+; 256  - Cyan (12)
+; 
+; Function inputs: none
+; 
+; Function returns: none
+; 
+; Registers used: 
+; r0 : holds win_score for comparison, passes color into illuminate rgb
+; 
+; Subroutines called: 
+; illuminate_RGB_LED
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+shine_little_light:
+    push    {lr}
+    ; Get current target score
+    ldr     r0, ptr_to_win_score
+    ldr     r0, [r0]
+    cmp     r0, #2048
+    bne     shine_little_light_1024
+    mov     r0, #10
+    b       shine_little_light_return
+shine_little_light_1024:
+    cmp     r0, #1024
+    bne     shine_little_light_512
+    mov     r0, #6
+    b       shine_little_light_return
+shine_little_light_512:
+    cmp     r0, #512
+    bne     shine_little_light_256
+    mov     r0, #14
+    b       shine_little_light_return
+shine_little_light_256:
+    mov     r0, #12
+
+shine_little_light_return:
+    bl      illuminate_RGB_LED
+    pop     {lr}
+    mov     pc, lr
+
+;***************************************************************************************************
+; Function name: return_game_state
+; Function behavior: Returns game_state value. If value is 1, user has selected to quit program. Used
+; in main function to pause until user is done playing game.
+; 
+; Function inputs: none
+; 
+; Function returns: 
+; r0 : value of game state variable
+; 
+; Registers used: 
+; r0 : uses address to get value
 ; 
 ; Subroutines called: 
 ; 
@@ -871,7 +1266,10 @@ set_new_block_store_and_return:
 ; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
 ; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
 ;*************************************************************************************************** 
-check_game_status:
+return_game_state:
+    ldr     r0, ptr_to_game_state
+    ldrb    r0, [r0]
 
+    mov     pc, lr
 
     .end
