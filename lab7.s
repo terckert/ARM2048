@@ -4,6 +4,7 @@
     .global uart_interrupt_init
     .global timer0_interrupt_init
     .global reset_game
+    .global timer1_init
 
 direction:  .byte 0
 
@@ -17,6 +18,7 @@ ptr_to_direction: .word direction
 lab7:
     push    {lr}
     
+    bl      timer1_init
     bl      uart_init
     ldr     r0, ptr_to_direction
     bl      uart_interrupt_init

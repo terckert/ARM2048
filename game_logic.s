@@ -44,6 +44,7 @@ grid_fifteen:   .string 27, "[15;23H",0
 grid_score:     .string 27, "[1;8H",0
 grid_time:      .string 27, "[1;26H",0
 
+win_score:      .word   2048
 tick:           .byte   1
 score:          .word   0
 time:           .word   0
@@ -63,6 +64,7 @@ white_on_black: .string 27, "[37;40m",0
     .global     print_time_score
     .global     update_time
     .global     reset_game
+    .global     set_new_block
 
 ptr_to_board_outline:   .word board_outline
 ptr_to_shadow_board:    .word shadow_board
@@ -73,6 +75,7 @@ ptr_to_score_string:    .word score_string
 ptr_to_time_string:     .word time_string 
 ptr_to_white_on_black:  .word white_on_black
 ptr_to_tick:            .word tick
+ptr_to_win_score:       .word win_score
 
 ;************************************* PTR_TO_GRID_OFFSETS *****************************************
 ptr_to_grid_zero:       .word grid_zero
@@ -339,6 +342,7 @@ shift_left_inner_loop_end:
     pop     {r4-r11}
     pop     {lr}
     mov     pc, lr
+
 ;***************************************************************************************************
 ; Function name: shift_left
 ;
@@ -671,6 +675,7 @@ print_time_score:
     bl      output_string
     
     pop     {lr}
+
 ;***************************************************************************************************
 ; Function name: update_time
 ; Function behavior: Toggles tick between 1 and 0, adds value to timer
@@ -702,7 +707,24 @@ update_time:
     str     r3, [r1]
     mov     pc, lr
 
-
+;***************************************************************************************************
+; Function name: reset_game
+; Function behavior: Resets the game to its start value. Resets board indices to all 0's. Draws
+; initial two tiles. Starts timer.
+;
+; Function inputs: none
+; 
+; Function returns: none
+; 
+; Registers used: 
+; r0 - r2 : scratch usages
+; 
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
 reset_game:
     push    {lr}
 
@@ -725,9 +747,19 @@ reset_game:
     str     r1, [r0]
 
     ; Set all indices of shadow board to 0
-    ; TODO: Create loop to set shadowboard_values to 0
-
-    ; TODO: Write function to set two initial game pieces
+    ldr     r0, ptr_to_shadow_board
+    movw    r1, #0
+    movw    r2, #0
+    ; for (int i = 0; i <= 60; i+=4)
+reset_game_loop:
+    str     r2, [r0, r1]
+    add     r1, #4
+    cmp     r1, #60
+    ble     reset_game_loop    
+    
+    ; Generate starting values
+    bl      set_new_block
+    bl      set_new_block
 
     ; Draw board to screen
     bl      draw_outline
@@ -741,11 +773,105 @@ reset_game:
 
 	;load current status
 	LDRB    r0, [r1, #0x00C]
-	ORR     r0, r0, #0x3		        ;set bit 0 to 1, set bit 1 to 1 to allow debugger to stop timer
-	STRB    r0, [r1, #0x00C]          ;enable timer 0 (A) for use
+	ORR     r0, r0, #0x3		        ; set bit 0 to 1, set bit 1 to 1 to allow debugger to stop timer
+	STRB    r0, [r1, #0x00C]            ; enable timer 0 (A) for use
 
     pop     {lr}
     mov     pc, lr
 
+;***************************************************************************************************
+; Function name: set_new_block
+; Function behavior: Creates a new block and assigns it a value of 2 or 4. Pushes value onto the 
+; shadow board.
+;
+; Function inputs: none
+; 
+; Function returns: none
+; 
+; Registers used:
+; r0 : Address of shadow board
+; r1 : Timer 1 GPTMTAV address (0x4003.1050)
+; r2 : Used in modulus function  
+; r3 : Used in modulus function
+; r4 : Holds value of 16 for modulus function
+; r5 : Holds index value from modulus
+; 
+; Subroutines called: none
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+set_new_block:
+    push    {r4-r5, lr}
+    ; Load address of shadow board
+    ldr     r0, ptr_to_shadow_board
+    ; Load address of timer 1 counter. Uses register GPTMTAV (0x050) which shows the free running value
+    ; of Timer 1A. This will be used with the modulus formula as a random number generator. Timer is always
+    ; running.
+    movw    r1, #0x1050
+    MOVT    r1, #0x4003
+    
+    movw    r4, #16                     ; Load 16 for multiplication and division
+    ; Uses modulus against timer1 current value to get index of shadowboard where we want to place new
+    ; piece
+set_new_block_index:
+    ; n mod m = n - (m * floor(n/m))
+    ldr     r2, [r1]                    ; Get current timer value
+    udiv    r3, r2, r4                  ; floor (n/m)
+    mul     r3, r3, r4                  ; m * floor(n/m)
+    sub     r5, r2, r3                  ; n - m * floor(n/m)
+    lsl     r5, #2                      ; index * 4 (word array)
+    ldr     r2, [r0, r5]                ; Get index value
+    cmp     r2, #0                      ; If value is not equal to 0 on board, find new index
+    bne     set_new_block_index
+
+    ; Once index is found we can use modulus to determine value. If result of mod is
+    ; 0 - 3  : generate a 4
+    ; 4 - 15 : generate a 2
+    ; n mod m = n - (m * floor(n/m))
+    ldr     r1, [r1]                    ; Get current timer value
+    udiv    r3, r1, r4                  ; floor (n/m)
+    mul     r3, r3, r4                  ; m * floor(n/m)
+    sub     r1, r1, r3                  ; n - m * floor(n/m)
+    cmp     r1, #3                      ; mod <= 3
+    ble     generate_four           
+    mov     r1, #2
+    b       set_new_block_store_and_return
+
+generate_four:
+    mov     r1, #4
+
+set_new_block_store_and_return:
+    str     r1, [r0, r5]                ; Store at found index
+    ldr     r0, ptr_to_empty_spaces     ; Decrement empty spaces
+    ldr     r1, [r0]                    ; Get current value
+    sub     r1, #1                      ; Decrement
+    str     r1, [r0]                    ; Store new value   
+
+    pop     {r4-r5, lr}
+    mov     pc, lr
+
+;***************************************************************************************************
+; Function name: check_game_status
+; Function behavior: Checks win/lose conditions. Returns a 1 if game is over and player lost, a 2 if
+; game is over and player won (HA!), and a 0 if game is not over.
+; 
+; Function inputs: none
+; 
+; Function returns: 
+; r0 : 0 - game ongoing, 1 - game over lost, 2 - game over won
+; 
+; Registers used: 
+; 
+; 
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+check_game_status:
+
+
     .end
-0x2000068B 

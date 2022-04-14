@@ -8,6 +8,7 @@
     .global     shift_down
     .global     print_time_score
     .global     update_time
+	.global		set_new_block
 
 shift_direction:    .word   0
 
@@ -16,6 +17,7 @@ shift_direction:    .word   0
     
     .global Timer_Handler
     .global timer0_interrupt_init
+	.global timer1_init
 
 ptr_to_shift_direction:     .word shift_direction
 
@@ -94,8 +96,8 @@ timer0_interrupt_init:
 	;set interval period
 	;load current status
 	LDR     r0, [r1, #GPTMTAILR]
-	MOV     r0, #0x1200				    ;set r2 to 8 million
-	MOVT    r0, #0x007A			        ;for 2 timer interrupts a second
+	MOV     r0, #0x9680				    ;set r2 to 10 million
+	MOVT    r0, #0x0098			        ;for 2 timer interrupts a second
 	STR     r0, [r1, #GPTMTAILR] 	    ;set interval period for timer A
 
 	;set up to interrupt processor
@@ -116,6 +118,78 @@ timer0_interrupt_init:
 
 	POP     {lr}
 	MOV     pc, lr
+
+;***************************************************************************************************
+; Function name: timer1_init
+; Function behavior: Initializes the timer to be continuous. Timer is used as a seed for random 
+; number generator.
+; 
+; Function inputs: none
+; 
+; Function returns: none
+; 
+; Registers used: 
+; r0: value manipulation
+; r1: holds base address of timer 0 
+; 
+; Subroutines called: 
+; 
+; 
+; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
+; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
+;*************************************************************************************************** 
+timer1_init:
+	PUSH    {lr}
+
+	;set r1 to clock settings base address
+	MOV     r1, #0xE000
+	MOVT    r1, #0x400F
+
+	;load in current value of the timer clock settings
+	LDRB    r0, [r1, #RCGCTIMER]
+	ORR     r0, r0, #0x2
+	STRB    r0, [r1, #RCGCTIMER]        ;enable clock for timer 1 (A)
+
+	;TIMER SETUP
+
+	;set r1 to timer 0 base address
+	MOV     r1, #0x1000
+	MOVT    r1, #0x4003
+
+	;Disable the timer
+	;load current status
+	LDRB    r0, [r1, #GPTMCTL]
+	AND     r0, r0, #0x0		        ;set bit 0 to 1
+	STRB    r0, [r1, #GPTMCTL]          ;disable timer 0 (A) for setup
+
+	;set 32-bit mode
+	;GPTMCFG: 	.equ 0x000 ;General Purpose Timer Configuration Register
+	;load current status
+	LDRB    r0, [r1]
+	AND     r0, r0, #0x0	            ;set bit 0 to 1
+	STRB    r0, [r1] 		            ;set configuration 32-bit for 16/32 bit timer
+
+	;set periodic mode
+	;load current status
+	LDRB    r0, [r1, #GPTMTAMR]
+	ORR     r0, r0, #0x2			    ;set 2 to r0
+	STRB    r0, [r1, #GPTMTAMR]         ;set periodic mode for timer A
+
+	;set interval period
+	;load current status
+	LDR     r0, [r1, #GPTMTAILR]
+	MOV     r0, #0x1200				    ;set r2 to 8 million
+	MOVT    r0, #0x007A			        ;for 2 timer interrupts a second
+	STR     r0, [r1, #GPTMTAILR] 	    ;set interval period for timer A
+
+	;start timer
+	LDRB    r0, [r1, #0x00C]
+	ORR     r0, r0, #0x3		        ; set bit 0 to 1, set bit 1 to 1 to allow debugger to stop timer
+	STRB    r0, [r1, #0x00C]            ; enable timer 0 (A) for use
+
+	POP     {lr}
+	MOV     pc, lr
+
 
 ;***************************************************************************************************
 ; Function name: Timer_Handler
@@ -187,7 +261,7 @@ Timer_Handler_post_shift:
     bne     Timer_Handler_print_updated_board
     ; Store 0 in direction controller so user can select new direction. Return from handler.
     strb    r0, [r5]
-    b       Timer_Handler_return        ;THIS SHOULD BE REMOVED AND WE SHOULD CREATE A NEW GAME SPRITE
+    bl 		set_new_block
 Timer_Handler_print_updated_board:
     bl      draw_board_internal
     ; Insert game status check here.
