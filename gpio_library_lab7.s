@@ -11,6 +11,13 @@
     .global initialize_daughter_board
 
 
+;GPIO Register OFFSETS
+DIR: .equ 0x400		;port direction register
+DEN: .equ 0x51C		;port digital enable
+DATA: .equ 0x3FC	;gpio data offset
+PUR: .equ 0x510		;pull-up resistor offset
+
+
 ;***************************************************************************************************
 ; Function name: illuminate_RGB_LED
 ; Function behavior: Takes in an even value between 0x00 and 0x0e. Uses parameter value to set pins
@@ -95,16 +102,16 @@ gpio_interrupt_init:
 	; Pin 1-3 control RGB and Pin 4 controls the lower left button. GPIODEN is at offset: 0x51c
 	movw	r5, #0x1e					; Set bits 1-3 - 0b0000.1110 - 0x1E (clock cycle 3)
 	; Clock share has been completed with above instruction
-	strb 	r5, [r4, #0x51c]			; Load bit set into memory
+	strb 	r5, [r4, #DEN]			; Load bit set into memory
 
 	; Set pin direction. Pin 4 is input, pins 1-3 are outputs.  If flagged with 1 will be output, 
 	; flagged at 0 will be input. GPIODIR is at offset: 0x400
 	movw	r5, #0x0e					; Set bit mask: 0b0000.0000 - 0x10
-	strb 	r5, [r4, #0x400]			; Load bit set into memory
+	strb 	r5, [r4, #DIR]			; Load bit set into memory
 				
 	; Set pull up resistor on switch. GPIOPUR is at offset: 0x510
 	movw	r5, #0x10					; Set bit mask: 0b0001.0000 - 0x10
-	strb 	r5, [r4, #0x510]			; Load bit set into memory
+	strb 	r5, [r4, #PUR]			; Load bit set into memory
 
 	;************************* LAB 5 CHANGE START ******************************;
 	; Set pins to detect a falling edge and send an interrupt signal using GIIOIEV
@@ -223,12 +230,18 @@ initialize_daughter_board:
     movt	r4, #0x4000					; Load upper half of address (2 clock cycles)
 	
 	; Set bits 3-6 for digital read in GPIODEN - offset 0x51c
-	movw	r5, #0x3c					; Set bits 3-6 : 0b0011.1100 - 0x3C (3 clock cycles)
+	;movw	r5, #0x3c					; Set bits 3-6 : 0b0011.1100 - 0x3C (3 clock cycles)
+
+	LDR		r5, [r4, #DEN]			; load the current value (in case UART0 is set,
+										; this won't overwrite previous values)]
+
+	ORR		r5, r5, #0x3C				; ORR with 0x3C to set bits 3-6
+
 	; We can now write to ports we shared clock with
-	strb	r5, [r4, #0x51c]			; Set pins
+	strb	r5, [r4, #DEN]			; Set pins
 
 	; Set pin direction. Pins 0-3 are outputs. Set for keypad matrix check. GPIODIR is at offset: 0x400
-	strb 	r5, [r4, #0x400]			; Load bit set into memory
+	strb 	r5, [r4, #DIR]			; Load bit set into memory
 	
 
 	; Change offset address to Port B, LEDs, 0x4000.5000
@@ -237,14 +250,14 @@ initialize_daughter_board:
 	; We will be setting pins 0-3 for both digital read and output. Have to set pins to 1
 	; Pins will be set in GPIODEN - offset 0x51c and GPIODIR - offset 0x400
 	movw	r5, #0x0f					; Load pin value - 0b0000.1111 - 0x0f
-	strb	r5, [r4, #0x51c]			; Set pins
-	strb	r5, [r4, #0x400]			; Set pins
+	strb	r5, [r4, #DEN]			; Set pins
+	strb	r5, [r4, #DIR]			; Set pins
 
 	; Change offset to PORT D, 0x4000.4000
 	add 	r4, #0x2000					; Previous stored address was 0x4000.5000
 	; We will be setting pins 0-3 for digital read in GPIODEN - offset 0x51c
 	; Previous instruction already stored 0x0f - 0b0000.1111 - 0x0f
-	strb	r5, [r4, #0x51c]			; Set pins
+	strb	r5, [r4, #DEN]			; Set pins
 
     ; Pop used registers
 	pop		{r4, r5}

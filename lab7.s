@@ -11,6 +11,7 @@
     .global return_stored_character
     .global output_string
 
+
 main_menu:          .string 0xC, 27, "[?25l","Welcome to 2048, Crappy Console Edition!", 0xA, 0xD
                     .string "You use the WASD keys to slide the board. When two", 0xA, 0xD
                     .string "pieces of the same value collide, they add together", 0xA, 0xD
@@ -23,9 +24,9 @@ main_menu:          .string 0xC, 27, "[?25l","Welcome to 2048, Crappy Console Ed
                     .string "A - Shift Left", 0xA, 0xD
                     .string "S - Shift Down", 0xA, 0xD
                     .string "D - Shift Right", 0xA, 0xD
-                    .string "Press any key to start!", 0
+                    .string "Press SPACE to start!", 0
 
-quit_msg:           .string 27, "[37;40m", 27, "[1;1H", 27, "[J"
+quit_msg:           .string 0xC, 27, "[37;40m", 27, "[1;1H", 27, "[J"
                     .string "Exiting...", 0xA, 0xD
 
 
@@ -36,8 +37,10 @@ direction:  .byte 0
 
     .global lab7
 
-ptr_to_direction: .word direction
-ptr_to_main_menu: .word main_menu
+ptr_to_direction: 	.word direction
+ptr_to_main_menu: 	.word main_menu
+ptr_to_quit_msg:	.word quit_msg
+
 
 lab7:
     push    {lr}
@@ -45,8 +48,8 @@ lab7:
     ; Initializes all peripherals
     bl      timer1_init
     bl      uart_init
-    bl      gpio_interrupt_init
-    ;bl      initialize_daughter_board
+
+    bl      initialize_daughter_board
     ldr     r0, ptr_to_direction
     bl      uart_interrupt_init
     ldr     r0, ptr_to_direction
@@ -54,18 +57,51 @@ lab7:
     
     ldr     r0, ptr_to_main_menu        ; Print main menu
     bl      output_string
+
+    ;set r1 to timer 1 base address
+	MOV     r1, #0x1000
+	MOVT    r1, #0x4003
+	;start timer
+	LDRB    r0, [r1, #0x00C]
+	ORR     r0, r0, #0x3		        ; set bit 0 to 1, set bit 1 to 1 to allow debugger to stop timer
+	STRB    r0, [r1, #0x00C]            ; enable timer 1 (A) for use
+
     ; Polls mydata to get keypress to start game
 lab7_main_menu_loop:
     bl      return_stored_character
     cmp     r0, #0
-    beq     lab7_main_menu_loop    
+    beq     lab7_main_menu_loop
+
+    bl      gpio_interrupt_init
 
     bl      reset_game
+
+
+
 lab7_gameplay_loop:
     bl      return_game_state
     cmp     r0, #0 
     beq     lab7_gameplay_loop
 
+	;game was quit so display message
+	LDR r0, ptr_to_quit_msg
+	BL output_string
+
+	;set r1 to timer 1 base address
+	MOV     r1, #0x1000
+	MOVT    r1, #0x4003
+	;stop timer
+	LDRB    r0, [r1, #0x00C]
+	ORR     r0, r0, #0x0		        ; set bit 0 to 0r
+	STRB    r0, [r1, #0x00C]            ; disbale timer 1 (A) for use
+
+	;set r1 to timer 1 base address
+	MOV     r1, #0x0000
+	MOVT    r1, #0x4003
+	;stop timer
+	LDRB    r0, [r1, #0x00C]
+	ORR     r0, r0, #0x0		        ; set bit 0 to 0
+	STRB    r0, [r1, #0x00C]            ; disable timer 0 (A) for use
 
 
     pop     {lr}

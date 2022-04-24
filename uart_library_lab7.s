@@ -14,6 +14,9 @@ shared_pointer: .word 	0
 ptr_to_mydata:  	.word mydata
 ptr_to_shared_ptr:	.word shared_pointer
 
+
+U0FR: .equ 0x18		;UART0 Flag Register
+
 ;***************************************************************************************************
 ; Function name: uart_init
 ; Function behavior: Initializes UART for read/write
@@ -329,7 +332,7 @@ output_character:
 	mov		r4, #0xc000
 	movt	r4, #0x4000
 	; Store address of flags in r5
-	add		r5,	r4, #0x18
+	add		r5,	r4, #U0FR 	;adds uart 0 flag register
 
 	; Load flag register for comparison. Bit flag is 16 decimal for TxFF (Bit 5). Loop continues until
 	; flag for transmit is 0.
@@ -370,10 +373,7 @@ WAITONTRANSMIT:
 ; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
 ;*************************************************************************************************** 
 output_string:  
-	PUSH	{lr}   						; Store register lr on stack
-
-	; Pushing registers used in function to stack
-	push	{r4-r5}
+	PUSH	{r4-r5, lr}   						; Store register lr on stack
 
 	mov		r4, r0						; Moving address of string into register
 	movw	r5, #0						; Setting loop counter to 0
@@ -410,9 +410,8 @@ output_string_inc_and_loop:
 output_string_main_loop_end:
 
 	; Restoring used registers via pop
-	pop 	{r4-r5}
 
-	POP 	{lr}  						; Restore lr from stack
+	POP 	{r4-r5, lr}  						; Restore lr from stack
 	mov		pc, lr 
 
 ;***************************************************************************************************
@@ -526,10 +525,8 @@ end_and_return_escape_sequences:
 ; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
 ;*************************************************************************************************** 
 int2string:  
-	PUSH	{lr}   						; Store register lr on stack
+	PUSH	{r4-r6, lr}   						; Store registers on stack
 
-	; Push used registers
-	push 	{r4-r6}
 
 	movw 	r6, #10						; Load decimal 10 into r6 for div/mul
 
@@ -585,9 +582,8 @@ int2string_main_loop:
 int2string_finish_and_return:
 
 	; Pop used registers
-	pop 	{r4-r6}
 
-	POP 	{lr}  						; Restore lr from stack
+	POP 	{r4-r6, lr}  						; Restore lr from stack
 	mov 	pc, lr
 
 ;***************************************************************************************************
@@ -609,7 +605,7 @@ int2string_finish_and_return:
 ; REMINDER: Push used registers r4-r11 to stack if used *PUSH/POP {r4, r5} or PUSH/POP {r4-r11})
 ; REMINDER: If calling another function from inside, PUSH/POP {lr}. To return from function MOV pc, lr
 ;*************************************************************************************************** 
-return_stored_character
+return_stored_character:
 	ldr 	r0, ptr_to_mydata
 	ldrb	r0, [r0]
 
